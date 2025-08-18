@@ -1,0 +1,185 @@
+grpc_example/
+├── CMakeLists.txt
+├── client.cpp
+├── helloworld.proto
+└── server.cpp
+
+helloworld.proto
+
+syntax = "proto3";
+
+package helloworld;
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
+
+protoc --grpc_out=. --cpp_out=. --plugin=protoc-gen-grpc=`which grpc_cpp_plugin` helloworld.proto
+
+
+CMakeLists.txt
+
+cmake_minimum_required(VERSION 3.15)
+project(grpc_example)
+
+# 设置C++标准
+set(CMAKE_CXX_STANDARD 17)
+
+# 查找必要的包
+find_package(Protobuf REQUIRED)
+find_package(gRPC REQUIRED)
+find_package(Threads REQUIRED)
+
+# 生成proto文件
+set(PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/helloworld.proto")
+get_filename_component(PROTO_DIR ${PROTO_FILE} DIRECTORY)
+get_filename_component(PROTO_NAME_WE ${PROTO_FILE} NAME_WE)
+
+# 生成protobuf和grpc代码
+protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILE})
+grpc_generate_cpp(GRPC_SRCS GRPC_HDRS ${PROTO_FILE})
+
+# 设置生成文件的路径
+set_source_files_properties(
+  ${PROTO_SRCS} ${PROTO_HDRS} ${GRPC_SRCS} ${GRPC_HDRS}
+  PROPERTIES GENERATED TRUE
+)
+
+# 包含生成的目录
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
+
+# 创建服务端可执行文件
+add_executable(server server.cpp
+  ${PROTO_SRCS}
+  ${PROTO_HDRS}
+  ${GRPC_SRCS}
+  ${GRPC_HDRS}
+)
+
+target_link_libraries(server
+  PRIVATE
+  gRPC::grpc++
+  gRPC::grpc++_reflection
+  ${Protobuf_LIBRARIES}
+  ${CMAKE_THREAD_LIBS_INIT}
+)
+
+# 创建客户端可执行文件
+add_executable(client client.cpp
+  ${PROTO_SRCS}
+  ${PROTO_HDRS}
+  ${GRPC_SRCS}
+  ${GRPC_HDRS}
+)
+
+target_link_libraries(client
+  PRIVATE
+  gRPC::grpc++
+  ${Protobuf_LIBRARIES}
+  ${CMAKE_THREAD_LIBS_INIT}
+)
+
+server.cpp
+
+#include <grpcpp/grpcpp.h>
+#include "helloworld.grpc.pb.h"
+
+using grpc::Server;
+using grpc::ServerBuilder;
+using grpc::ServerContext;
+using grpc::Status;
+using helloworld::HelloRequest;
+using helloworld::HelloReply;
+using helloworld::Greeter;
+
+class GreeterServiceImpl final : public Greeter::Service {
+  Status SayHello(ServerContext* context, const HelloRequest* request,
+                  HelloReply* reply) override {
+    std::string prefix("Hello ");
+    reply->set_message(prefix + request->name());
+    std::cout << "Sending response: " << reply->message() << std::endl;
+    return Status::OK;
+  }
+};
+
+void RunServer() {
+  std::string server_address("0.0.0.0:50051");
+  GreeterServiceImpl service;
+
+  ServerBuilder builder;
+  builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+  builder.RegisterService(&service);
+
+  std::unique_ptr<Server> server(builder.BuildAndStart());
+  std::cout << "Server listening on " << server_address << std::endl;
+  server->Wait();
+}
+
+int main() {
+  RunServer();
+  return 0;
+}
+
+client.cpp
+
+#include <grpcpp/grpcpp.h>
+#include "helloworld.grpc.pb.h"
+
+using grpc::Channel;
+using grpc::ClientContext;
+using grpc::Status;
+using helloworld::HelloRequest;
+using helloworld::HelloReply;
+using helloworld::Greeter;
+
+class GreeterClient {
+ public:
+  GreeterClient(std::shared_ptr<Channel> channel)
+      : stub_(Greeter::NewStub(channel)) {}
+
+  std::string SayHello(const std::string& user) {
+    HelloRequest request;
+    request.set_name(user);
+
+    HelloReply reply;
+    ClientContext context;
+
+    Status status = stub_->SayHello(&context, request, &reply);
+
+    if (status.ok()) {
+      return reply.message();
+    } else {
+      return "RPC failed";
+    }
+  }
+
+ private:
+  std::unique_ptr<Greeter::Stub> stub_;
+};
+
+int main() {
+  GreeterClient greeter(
+      grpc::CreateChannel("localhost:50051", grpc::InsecureChannelCredentials()));
+  
+  std::string user("World");
+  std::string reply = greeter.SayHello(user);
+  std::cout << "Greeter received: " << reply << std::endl;
+
+  return 0;
+}
+
+
+
+mkdir build
+cd build
+
+camke ..
+make
